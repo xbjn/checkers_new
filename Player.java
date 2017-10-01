@@ -1,8 +1,9 @@
+import java.sql.Array;
 import java.util.*;
 
 
 public class Player {
-    /**
+	/**
      * Performs a move
      *
      * @param pState
@@ -15,11 +16,18 @@ public class Player {
 	
 	//Evaluation should be applied wen unlikley to exhibit swings in value in near future
 	// Apply iterative deeping, helps with move ordering
+	//Transposition tables cache information about  previous searches. The best move that was found.
+	// Priori how to search on the best moves. Evaluating all moves that result in a king before
+	// moves that don't 
 	
-	
+	// Best moves need to be searched first. 
 	
     public GameState bestGameState;
-    public int bestScore;
+    public int bestScore = Integer.MAX_VALUE;
+	public long startTime;
+	public long MaxAllowedTime = 50;
+	
+	public HashMap<Integer, ArrayList<GameState>> unsortedMoves; 
     
     
     public GameState play(final GameState pState, final Deadline pDue) {
@@ -39,129 +47,98 @@ public class Player {
         
         //Random random = new Random();
         //return lNextStates.elementAt(random.nextInt(lNextStates.size()));
-       
-        generateBestMove(pState);
-        
-        System.err.println(bestScore);
-        
-        return bestGameState;
+               
+        return iterativeDeepening(pState);
         
         
-    }    
+    }   
     
-    public void generateBestMove(GameState pState) {
+    public GameState iterativeDeepening(GameState pState) {
     	
-    	long startTime = System.currentTimeMillis();
-    	long MaxAllowedTime = 2;
-    	
-        Vector<GameState> lNextStates = new Vector<GameState>();
+    	Vector<GameState> lNextStates = new Vector<GameState>();
         pState.findPossibleMoves(lNextStates);
-    	
-        int player = pState.getNextPlayer();
-        
-        GameState bestChild = new GameState();
         
         int score;
+        GameState bestMove = null;
         
+        this.startTime = System.currentTimeMillis();
         
-        // 
         for (int depth= 0; depth < Integer.MAX_VALUE; depth++) {
-            //System.err.println(depth);
-            //System.err.println(System.currentTimeMillis() - startTime);
-        	if (System.currentTimeMillis() - startTime > MaxAllowedTime){
-        		
+        	
+            if (System.currentTimeMillis() - this.startTime > this.MaxAllowedTime){
+            	
         		break; 
         		
         	}
-        	
-        	int v = Integer.MIN_VALUE;
-
+            
+            int v = Integer.MIN_VALUE;
+            
+            
+            
 	        for (GameState child : lNextStates) {
 	        	
-	            score = alphaBeta(pState, depth, Integer.MIN_VALUE, Integer.MAX_VALUE, player);
-	
+	        	score = alphaBeta(child, Integer.MIN_VALUE, Integer.MAX_VALUE, depth);
+	        	
 	        	if (score > v) {
 	        		v = score;
-	        		bestChild = child;
+	        		bestMove = child;
+	        		
 	        	}
-	            
+	        	
 	        }
-	        
-	        this.bestScore = v;
-	        
-	        this.bestGameState = bestChild;  
         }
-        
-
+                
+    	return bestMove;
     }
-
-    public int alphaBeta(GameState pState, int depth, int alpha, int beta, int player) {
+    
+    public int alphaBeta(GameState pState, int alpha, int beta, int depth) {
     	
     	// State: the current state we are analysing
     	// alpha: the current best value achievable by A
     	// beta : the  current best value achievable by B
     	// player : the current player
     	
-    	int v;
-    	
         Vector<GameState> lNextStates = new Vector<GameState>();
         pState.findPossibleMoves(lNextStates);
-    	    	
-    	if (depth == 0 | lNextStates.size() == 0) {
+    	
+        //Check if terminal state
+        if (pState.isEOG()) {
+	
+        	 if (pState.isRedWin()) {
+             	return this.bestScore;
+             }
+        	 else {
+        		 return -this.bestScore;
+        	 }
+        	
+        }
+       
+
+        else if (depth == 0) {
     		
-    		v = gamma(pState, player);
+    		return gamma(pState);
     		
     	}
     	
-    	else {
-    		if (player == Constants.CELL_RED) {
-    			
-    			v = Integer.MIN_VALUE;
-    			
-    			for (GameState child : lNextStates) {
-    				v = Math.max(v, alphaBeta(child, depth-1, alpha, beta, Constants.CELL_WHITE ));
-    				
-    				
-    				if (v > alpha) {
-        				alpha = v;
-        			}
-
-        			if (beta <= alpha) {
-        				break; // beta pruning
-        			}
-        		}
-    			
-    		}
-    		
-    		else {
-    			
-    			v = Integer.MAX_VALUE;
-    			
-    			for (GameState child : lNextStates) {
-    				
-    				v = Math.min(v, alphaBeta(child, depth-1, alpha, beta, Constants.CELL_RED));
-    				
-    				if (v > alpha) {
-        				alpha = v;
-        			}
-
-        			if (beta <= alpha) {
-        				break; // beta pruning
-        			}
-    				
-    			}
-    			
-    			
-    		}
-    		
-    	}
+	    	else {
+	    		if (pState.getNextPlayer() == Constants.CELL_RED) {
+	    			
+	    			return max_value(pState, alpha, beta, depth);
+	    			
+	    		}
+	    		
+	    		else {
+	  
+	    			return min_value(pState, alpha, beta, depth);
+	    			
+	    		}
+	    		
+	    	}
     	
-    	
-		return v;
+    
     	
     }
-
-    
+ 
     public int markScore(GameState pState, int player) {
 		    	
     	int normalMarks = 0;
@@ -186,122 +163,135 @@ public class Player {
 	
     }
     
-    public int locationScore(GameState pState, int player) {
+    public int locationScore(GameState pState) {
     	
     	//2) Marks in Opponents area = 2p
     	//	 Marks in our bottomline = 0.5p
     	//	 Marks on the edge = 2p
     	
-    	int locationScore = 0;
+    	int whiteLocationScore = 0;
+    	int redLocationScore = 0;
     	
-    	if (player == Constants.CELL_WHITE){
-    		
-    		for (int i = 0; i < 7; i ++) {
-    			
 
-	        	int valueInCell = pState.get(i);
+    		
+		for (int i = 0; i < 7; i ++) {
+			
+
+        	int valueInCell = pState.get(i);
+        	
+        	if (valueInCell == Constants.CELL_WHITE | valueInCell == 5) {
+		
+        		whiteLocationScore += 3;
+        		
+        	}
+		}
+		
+		for (int i = 28; i < 31; i++) {
+			
+        	int valueInCell = pState.get(i);
+        	
+        	if (valueInCell == Constants.CELL_WHITE | valueInCell == 5) {
+		
+        		whiteLocationScore += 1;
+        		
+        	}
+        
+		}
+		
+		for (int row = 0; row < 7; row++) {
+		
+			for (int col = 0; col < 7 ; col = col+6 ) {
+	        	int valueInCell = pState.get(row, col);
 	        	
 	        	if (valueInCell == Constants.CELL_WHITE | valueInCell == 5) {
     		
-	        		locationScore += 3;
-	        		
+	        		whiteLocationScore += 2;
+        		
 	        	}
-    		}
-    		
-    		for (int i = 28; i < 31; i++) {
-    			
-	        	int valueInCell = pState.get(i);
-	        	
-	        	if (valueInCell == Constants.CELL_WHITE | valueInCell == 5) {
-    		
-	        		locationScore += 1;
-	        		
-	        	}
-	        
-    		}
-    		
-    		for (int row = 0; row < 7; row++) {
-    		
-    			for (int col = 0; col < 7 ; col = col+6 ) {
-		        	int valueInCell = pState.get(row, col);
-		        	
-		        	if (valueInCell == Constants.CELL_WHITE | valueInCell == 5) {
-	    		
-		        		locationScore += 2;
-	        		
-		        	}
-    			}
+			}
 
-    		}
-    		
-    		
-    	}
+		}
     	
-    	else {
-    		
-    		for (int i = 20; i < 31; i ++) {
-    			
 
-	        	int valueInCell = pState.get(i);
+    		
+		for (int i = 20; i < 31; i ++) {
+			
+
+        	int valueInCell = pState.get(i);
+        	
+        	if (valueInCell == Constants.CELL_RED | valueInCell == 5) {
+		
+        		redLocationScore += 3;
+        		
+        	}
+		}
+		
+		for (int i = 0; i < 3; i++) {
+			
+        	int valueInCell = pState.get(i);
+        	
+        	if (valueInCell == Constants.CELL_RED | valueInCell == 5) {
+		
+        		redLocationScore += 1;
+        		
+        	}
+        
+		}
+		
+		for (int row = 0; row < 7; row++) {
+		
+			for (int col = 0; col < 7 ; col = col+6 ) {
+	        	int valueInCell = pState.get(row, col);
 	        	
 	        	if (valueInCell == Constants.CELL_RED | valueInCell == 5) {
     		
-	        		locationScore += 3;
-	        		
+	        		redLocationScore += 2;
+        		
 	        	}
-    		}
-    		
-    		for (int i = 0; i < 3; i++) {
-    			
-	        	int valueInCell = pState.get(i);
-	        	
-	        	if (valueInCell == Constants.CELL_RED | valueInCell == 5) {
-    		
-	        		locationScore += 1;
-	        		
-	        	}
-	        
-    		}
-    		
-    		for (int row = 0; row < 7; row++) {
-    		
-    			for (int col = 0; col < 7 ; col = col+6 ) {
-		        	int valueInCell = pState.get(row, col);
-		        	
-		        	if (valueInCell == Constants.CELL_RED | valueInCell == 5) {
-	    		
-		        		locationScore += 2;
-	        		
-		        	}
-    			}
+			}
 
-    		}
+		}
     		
     		
+    	
     		
-    	}
-    		
-    	return locationScore;
+    	return redLocationScore - whiteLocationScore;
     	
     	}
 
-
-    
-    public int jumpingScore(GameState pState, int player) {
+    public int jumpingScore(GameState pState) {
     	
     	//3) Player can jump over a king = 8p
     	//	 Player can jump over a normal mark = 3p
     	
+    	
     	int jumpingScore = 0;
+    	
+    	int typeOfMove = pState.getMove().getType();
+    	
+    	if (typeOfMove == 1) {
+    		
+    		jumpingScore += 6;
+    	
+    	}
+    	else if(typeOfMove == 2) {
+    		
+    		jumpingScore += 12;
+    		
+    	}
+    	
+    	else if(typeOfMove == 3) {
+    		
+    		jumpingScore +=18;
+    	}
     	
     	
 
     	return jumpingScore;
     	
     }
-    
-    
-    public int gamma(GameState pState, int player) {
+     
+    public int gamma(GameState pState) {
     	
     	//1) Normal, per mark = 5 p
     	//	 King, per mark = 5*3 p
@@ -311,31 +301,129 @@ public class Player {
     	//	 Marks on the edge = 2p
     	
     	//3) Player can jump over a king = 8p
-    	//	 Player can jump over a normal mark = 3p
+    	//	 Player can jump over a normal mark = 4p
     	
     	//4) Player has n marks among the four neighboring grid = 0.3*n
     	
-    	int playerScore = totScore(pState, Constants.CELL_RED);
-    	int otherPlayerScore = totScore(pState, Constants.CELL_WHITE);
+    	
+    	int redMarkScore = markScore(pState, Constants.CELL_RED);
+    	int whiteMarkScore = markScore(pState, Constants.CELL_WHITE);
+    	int locationScore = locationScore(pState);
+    	
+    	int jumpingScore;
+    	if (pState.getNextPlayer() == Constants.CELL_WHITE) {
+        	jumpingScore = jumpingScore(pState);
+    	}
+    	else {
+    		jumpingScore = -jumpingScore(pState);
+    	}
 
-    	return (playerScore - otherPlayerScore);
+    	
+		int totScore = redMarkScore - whiteMarkScore + locationScore + jumpingScore;
+    	
+    	return totScore;
     	
     	
     }
-    
-    public int totScore(GameState pState, int player) {
-    	int score = 0;
+       
+    public int max_value(GameState pState, int alpha, int beta, int depth) {
     	
-    	int markScore = markScore(pState, player);
-    	int locationScore = locationScore(pState, player);
-    	int jumpingScore = jumpingScore(pState, player);
- 	
+    	int v =  Integer.MIN_VALUE;
     	
-    	return markScore + locationScore + jumpingScore;
+    	unsortedMoves = new HashMap<Integer, ArrayList<GameState>>();
+    	
+    	Vector<GameState> lNextStates = new Vector<GameState>();
+        pState.findPossibleMoves(lNextStates);
+        
+        for (GameState child: lNextStates) {
+        	
+        	int score = gamma(pState);
+        	if (unsortedMoves.get(score) == null) {
+        		unsortedMoves.put(score, new ArrayList<GameState>());
+        	}
+        	
+        	unsortedMoves.get(score).add(child);
+        	
+        }
+        
+    	//Map<Integer, ArrayList<GameState>> sortedMoves = new TreeMap<Integer, ArrayList<GameState>>(unsortedMoves); 
+
+        Object[] sortedMoves = unsortedMoves.keySet().toArray();
+        Arrays.sort(sortedMoves);
+        
+		for (Object key : sortedMoves) {
+			
+			ArrayList<GameState> childList = unsortedMoves.get(key);
+				
+			Iterator<GameState> childListIterator = childList.iterator();
+			
+			while (childListIterator.hasNext()) {
+			
+				v = Math.max(v, alphaBeta(childListIterator.next(), alpha, beta, depth));
+				
+				alpha = Math.max(alpha,v);
+				if (beta <= alpha) {
+					break;
+					
+				}
+			}
+
+			
+		}
+    	
+		return v;
+    	
+    }
+
+    public int min_value(GameState pState, int alpha, int beta, int depth) {
+    	
+    	unsortedMoves = new HashMap<Integer, ArrayList<GameState>>();
+    	
+    	Vector<GameState> lNextStates = new Vector<GameState>();
+        pState.findPossibleMoves(lNextStates);
+        
+        for (GameState child: lNextStates) {
+        	
+        	int score = gamma(pState);
+        	if (unsortedMoves.get(score) == null) {
+        		unsortedMoves.put(score, new ArrayList<GameState>());
+        	}
+        	
+        	unsortedMoves.get(score).add(child);
+        	
+        }
+        
+        Object[] sortedMoves = unsortedMoves.keySet().toArray();
+        Arrays.sort(sortedMoves, Collections.reverseOrder());
+    	
+		int v = Integer.MAX_VALUE;
+		
+		for (Object key : sortedMoves) {
+			
+			ArrayList<GameState> childList = unsortedMoves.get(key);
+				
+			Iterator<GameState> childListIterator = childList.iterator();
+		
+			while (childListIterator.hasNext()) {
+				
+				v = Math.min(v, alphaBeta(childListIterator.next(), alpha, beta, depth-1));
+				
+				beta = Math.min(beta, v);
+				
+				if (beta <= alpha) {
+					break;
+				}
+			}
+
+			
+		}
+    	
+		return v;
+    	
     }
     
-    
 
+    
     
     
 }
